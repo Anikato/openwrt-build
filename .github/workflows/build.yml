@@ -82,15 +82,35 @@ jobs:
       - name: Compile firmware
         id: compile
         run: |
-          set -eo pipefail
           cd openwrt
           echo "Started: $(date)"
-          make -j$(nproc) V=s 2>&1 | tee build.log || {
-            echo "Multi-thread build failed, retrying with single thread..."
-            make -j1 V=s 2>&1 | tee build.log
-          }
+          make -j$(nproc) 2>&1 | tee build.log
+          MAKE_EXIT=${PIPESTATUS[0]}
+          if [ $MAKE_EXIT -ne 0 ]; then
+            echo "::error::Multi-thread build failed (exit $MAKE_EXIT). Retrying single-thread with verbose..."
+            echo "========== TAIL OF FAILED BUILD LOG ==========" 
+            tail -100 build.log
+            echo "==============================================="
+            make -j1 V=s 2>&1 | tee build_j1.log
+            MAKE_EXIT=${PIPESTATUS[0]}
+          fi
           echo "Finished: $(date)"
-          echo "status=success" >> $GITHUB_OUTPUT
+          if [ $MAKE_EXIT -eq 0 ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "::error::Build failed!"
+            tail -200 build_j1.log
+            exit 1
+          fi
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: |
+            openwrt/build.log
+            openwrt/build_j1.log
 
       - name: Check disk space
         if: steps.compile.outputs.status == 'success'
